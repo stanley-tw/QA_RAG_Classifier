@@ -1,0 +1,6 @@
+[submodule "common_spec"]
+	path = common_spec
+	url = https://github.com/stanley-tw/common_spec_pub.git
+[submodule "DO_NOT_READ/RAG-Anything"]
+	path = DO_NOT_READ/RAG-Anything
+	url = https://github.com/HKUDS/RAG-Anything.git
