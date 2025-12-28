@@ -20,6 +20,10 @@ def run_ui() -> int:
         return 0
 
 
+def rag() -> int:
+    return run_ui()
+
+
 def main() -> int:
     args = sys.argv[1:]
 

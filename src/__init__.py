@@ -1,1 +1,1 @@
-"""Project package root."""
+"""QA RAG Classifier package."""
