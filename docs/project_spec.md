@@ -44,6 +44,7 @@ Build a system that ingests multiple PDF documents, discovers domain labels, mer
   - PDF -> domains
   - content block -> domain
 - Review queue for ambiguous merges
+- Artifact bundle for downstream consumers (see `docs/artifact_spec.md`)
 
 ## Data Model (Logical)
 
@@ -249,6 +250,8 @@ Must expose:
 - `REVIEW_THRESHOLD_NAME_PLUS_SUMMARY`
 - `MAX_TOKENS_PER_EMBED`
 - `TOKENIZATION_FALLBACK_APPROX_ENABLED`
+- `DB_PATH`
+- `ARTIFACT_DIR`
 - `PREFERRED_DISPLAY_LANGUAGE` (auto | en | zh)
 
 All of the above must be editable via CLI/UI.

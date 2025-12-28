@@ -1,8 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from rich.console import Console
 
 from src.config import load_config
+from src.pipeline.run import run_pipeline
 
 
 def run_cli(args: list[str]) -> int:
@@ -13,6 +14,7 @@ def run_cli(args: list[str]) -> int:
         console.print("[bold]Domain Discovery CLI[/bold]")
         console.print("Usage:")
         console.print("  python src/main.py ui")
+        console.print("  python src/main.py run")
         console.print("  python src/main.py help")
         console.print("")
         console.print("Current config:")
@@ -25,6 +27,15 @@ def run_cli(args: list[str]) -> int:
             f"{config.review_threshold_name_plus_summary}"
         )
         return 0
+
+    if args[0] == "run":
+        console.print("[bold]Running pipeline...[/bold]")
+        success = run_pipeline(config)
+        if success:
+            console.print("[green]Pipeline run completed.[/green]")
+            return 0
+        console.print("[yellow]Pipeline run skipped (no PDFs or candidates).[/yellow]")
+        return 1
 
     console.print(f"[red]Unknown command:[/red] {args[0]}")
     console.print("Use: python src/main.py help")

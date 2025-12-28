@@ -1,8 +1,28 @@
 from __future__ import annotations
 
+import hashlib
+import sqlite3
+from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
+
 import streamlit as st
 
 from src.config import load_config
+from src.db.candidate_repo import get_candidate
+from src.db.content_repo import delete_content_blocks_for_pdf
+from src.db.repo import (
+    clear_derived_tables,
+    delete_pdf,
+    get_pdf_by_checksum,
+    get_pdf_by_path,
+    insert_pdf,
+    list_pdfs,
+)
+from src.db.review_repo import list_pending_reviews, resolve_review
+from src.db.schema import create_schema
+from src.pipeline.run import run_pipeline
+from src.ui.state import load_domain_list, load_pdf_lists
 
 
 def render_upload_section() -> None:
@@ -33,6 +53,95 @@ def render_pdf_lists() -> None:
             st.write(processed_pdfs)
         else:
             st.caption("No processed PDFs yet.")
+
+
+def render_delete_pdf(config) -> None:
+    st.subheader("Delete PDFs (Hard Delete)")
+    conn = sqlite3.connect(config.db_path)
+    try:
+        create_schema(conn)
+        pdfs = list_pdfs(conn)
+        if not pdfs:
+            st.caption("No stored PDFs available.")
+            return
+        options = {row["file_path"]: row["pdf_id"] for row in pdfs}
+        selection = st.selectbox(
+            "Select PDF to delete",
+            options=list(options.keys()),
+            key="delete_pdf_path",
+        )
+        confirm = st.checkbox(
+            "I understand this will delete the stored PDF and reset derived data.",
+            key="delete_pdf_confirm",
+        )
+        if st.button("Delete PDF", type="secondary", disabled=not confirm):
+            pdf_id = options.get(selection)
+            if not pdf_id:
+                st.warning("Invalid PDF selection.")
+                return
+            existing = get_pdf_by_path(conn, selection)
+            if existing:
+                pdf_id = existing["pdf_id"]
+            delete_content_blocks_for_pdf(conn, pdf_id)
+            delete_pdf(conn, pdf_id)
+            clear_derived_tables(conn)
+            _remove_pdf_file(selection, config.pdf_storage_dir)
+            stored_pdfs, processed_pdfs = load_pdf_lists(config.db_path)
+            st.session_state["stored_pdfs"] = stored_pdfs
+            st.session_state["processed_pdfs"] = processed_pdfs
+            st.session_state["domain_list"] = load_domain_list(config.db_path)
+            st.success("PDF deleted. Derived data reset.")
+    finally:
+        conn.close()
+
+
+def _remove_pdf_file(file_path: str, storage_dir: str) -> None:
+    try:
+        base = Path(storage_dir).resolve()
+        target = Path(file_path).resolve()
+        if base in target.parents and target.exists():
+            target.unlink()
+    except Exception:
+        pass
+
+def _safe_filename(name: str) -> str:
+    cleaned = []
+    for ch in name:
+        if ch.isascii() and (ch.isalnum() or ch in {".", "_", "-"}):
+            cleaned.append(ch)
+        else:
+            cleaned.append("_")
+    return "".join(cleaned).strip("._") or "upload.pdf"
+
+
+def _persist_uploads(db_path: str, storage_dir: str) -> list[str]:
+    uploaded = st.session_state.get("uploaded_pdfs") or []
+    if not uploaded:
+        return []
+
+    Path(storage_dir).mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    try:
+        create_schema(conn)
+        stored_paths = []
+        for file in uploaded:
+            data = file.getvalue()
+            checksum = hashlib.sha256(data).hexdigest()
+            existing = get_pdf_by_checksum(conn, checksum)
+            if existing:
+                stored_paths.append(existing["file_path"])
+                continue
+            safe_name = _safe_filename(file.name)
+            target = Path(storage_dir) / f"{checksum}_{safe_name}"
+            if not target.exists():
+                target.write_bytes(data)
+            pdf_id = f"pdf_{checksum}"
+            ingested_at = datetime.now(timezone.utc).isoformat()
+            insert_pdf(conn, pdf_id, str(target), checksum, ingested_at)
+            stored_paths.append(str(target))
+        return stored_paths
+    finally:
+        conn.close()
 
 
 def render_parameters(config) -> None:
@@ -83,8 +192,69 @@ def render_parameters(config) -> None:
         key="preferred_display_language",
     )
 
-    if st.button("Start RAG", type="primary"):
-        st.info("Pipeline execution is not wired yet.")
+    run_in_progress = st.session_state.get("run_in_progress", False)
+    if st.button("Start RAG", type="primary", disabled=run_in_progress):
+        st.session_state["run_in_progress"] = True
+        try:
+            _persist_uploads(config.db_path, config.pdf_storage_dir)
+            stored_pdfs, processed_pdfs = load_pdf_lists(config.db_path)
+            if not stored_pdfs:
+                st.warning(
+                    "No PDFs available. Please upload at least one PDF to run the pipeline."
+                )
+                return
+            st.session_state["stored_pdfs"] = stored_pdfs
+            st.session_state["processed_pdfs"] = processed_pdfs
+            progress = st.progress(0)
+            status = st.empty()
+            log_area = st.empty()
+            log_lines: list[str] = []
+
+            def report(message: str, pct: float) -> None:
+                status.text(message)
+                progress.progress(min(max(pct, 0.0), 1.0))
+                log_lines.append(message)
+                log_area.text_area(
+                    "Pipeline log",
+                    value="\n".join(log_lines[-200:]),
+                    height=200,
+                )
+
+            with st.spinner("Running pipeline..."):
+                updated_config = replace(
+                    config,
+                    embedding_model=st.session_state.get(
+                        "embedding_model", config.embedding_model
+                    ),
+                    merge_threshold_name_only=st.session_state.get(
+                        "merge_threshold_name_only",
+                        config.merge_threshold_name_only,
+                    ),
+                    review_threshold_name_only=st.session_state.get(
+                        "review_threshold_name_only",
+                        config.review_threshold_name_only,
+                    ),
+                    merge_threshold_name_plus_summary=st.session_state.get(
+                        "merge_threshold_name_plus_summary",
+                        config.merge_threshold_name_plus_summary,
+                    ),
+                    review_threshold_name_plus_summary=st.session_state.get(
+                        "review_threshold_name_plus_summary",
+                        config.review_threshold_name_plus_summary,
+                    ),
+                    preferred_display_language=st.session_state.get(
+                        "preferred_display_language",
+                        config.preferred_display_language,
+                    ),
+                )
+                success = run_pipeline(updated_config, progress_cb=report)
+            if success:
+                st.success("Pipeline run completed.")
+                st.session_state["domain_list"] = load_domain_list(config.db_path)
+            else:
+                st.warning("No unprocessed PDFs available or no candidates found.")
+        finally:
+            st.session_state["run_in_progress"] = False
 
 
 def render_domain_list() -> None:
@@ -98,6 +268,57 @@ def render_domain_list() -> None:
         st.markdown(f"- {domain}")
 
 
+def render_artifact_path(artifact_dir: str) -> None:
+    st.subheader("Artifact Bundle")
+    st.text(f"Bundle output directory (planned): {artifact_dir}")
+
+
+def render_review_queue(db_path: str) -> None:
+    st.subheader("Review Queue")
+    conn = sqlite3.connect(db_path)
+    try:
+        create_schema(conn)
+        pending = list_pending_reviews(conn)
+        if not pending:
+            st.caption("No pending review items.")
+            return
+        for item in pending:
+            candidate_a = get_candidate(conn, item["candidate_a_id"])
+            candidate_b = get_candidate(conn, item["candidate_b_id"])
+            name_a = candidate_a["candidate_name"] if candidate_a else item["candidate_a_id"]
+            name_b = candidate_b["candidate_name"] if candidate_b else item["candidate_b_id"]
+            st.markdown(
+                f"- **{name_a}** <-> **{name_b}** | similarity={item['similarity']:.3f} | reason={item['reason']}"
+            )
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button(
+                    "Accept",
+                    key=f"accept_{item['review_id']}",
+                ):
+                    resolve_review(
+                        conn,
+                        review_id=item["review_id"],
+                        status="accepted",
+                        resolved_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                    st.rerun()
+            with col2:
+                if st.button(
+                    "Reject",
+                    key=f"reject_{item['review_id']}",
+                ):
+                    resolve_review(
+                        conn,
+                        review_id=item["review_id"],
+                        status="rejected",
+                        resolved_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                    st.rerun()
+    finally:
+        conn.close()
+
+
 def main() -> None:
     st.set_page_config(page_title="Domain Discovery", layout="wide")
     st.title("Canonical Domain Discovery")
@@ -105,9 +326,17 @@ def main() -> None:
     config = load_config()
 
     render_upload_section()
+    stored_pdfs, processed_pdfs = load_pdf_lists(config.db_path)
+    st.session_state["stored_pdfs"] = stored_pdfs
+    st.session_state["processed_pdfs"] = processed_pdfs
     render_pdf_lists()
     render_parameters(config)
+    render_delete_pdf(config)
     render_domain_list()
+    render_review_queue(config.db_path)
+    render_artifact_path(config.artifact_dir)
+    st.subheader("PDF Storage")
+    st.text(f"Stored PDF directory: {config.pdf_storage_dir}")
 
 
 if __name__ == "__main__":

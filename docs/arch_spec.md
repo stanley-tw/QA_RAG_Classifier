@@ -10,6 +10,7 @@ The system is a pipeline that ingests PDFs, extracts domain candidates, merges t
 - RAG-Anything Adapter
 - Embedding Service (Azure OpenAI)
 - SQLite Persistence
+- Artifact Bundle Writer (see `docs/artifact_spec.md`)
 
 ## Data Flow (Mermaid)
 ```mermaid

@@ -1,0 +1,22 @@
+[project]
+name = "qa-rag-classifier"
+version = "0.1.0"
+description = "Canonical domain discovery and embedding pipeline"
+readme = "docs/project_spec.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+  "openai>=2.14.0",
+  "numpy>=2.4.0",
+  "raganything>=1.2.8",
+  "rich>=14.2.0",
+  "streamlit>=1.52.2",
+  "tiktoken>=0.12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=9.0.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

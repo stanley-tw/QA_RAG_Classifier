@@ -27,6 +27,8 @@ Provide a minimal Streamlit UI to upload PDFs, adjust parameters, trigger the RA
   - Display domain_id and display_name.
   - Show aliases and source PDFs when available.
   - After a successful run, reload the domain list from SQLite.
+- Provide a link to the artifact bundle output location (see `docs/artifact_spec.md`).
+ - Display the configured artifact output directory from `ARTIFACT_DIR`.
 
 ## UI State
 Use `st.session_state` for:
