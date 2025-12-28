@@ -239,6 +239,7 @@ Required tables (logical):
 - `block_domain_map(block_id, domain_id)`
 - `token_count_cache(text_hash, model_name, token_count, tokenization_mode)`
 - `trunc_text_cache(text_hash, model_name, max_tokens, truncated_text, tokenization_mode)`
+- `token_usage(run_id, model_name, total_tokens, created_at)`
 
 ## Configuration (src/config.py)
 Must expose:
@@ -263,6 +264,7 @@ Minimal actions:
 - Trigger PDF ingestion and parsing.
 - View canonical domains and aliases.
 - Review queue: approve/reject candidate merges.
+- Show token usage for the latest run and cumulative total by model.
 
 ## Azure OpenAI Integration
 - Use the new `AzureOpenAI` client.

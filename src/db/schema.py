@@ -127,6 +127,14 @@ def create_schema(conn: sqlite3.Connection) -> None:
           PRIMARY KEY(text_hash, model_name, max_tokens)
         );
 
+        CREATE TABLE IF NOT EXISTS token_usage(
+          run_id TEXT NOT NULL,
+          model_name TEXT NOT NULL,
+          total_tokens INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY(run_id, model_name)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_content_blocks_pdf_id ON content_blocks(pdf_id);
         CREATE INDEX IF NOT EXISTS idx_candidates_pdf_id ON domain_candidates(source_pdf_id);
         CREATE INDEX IF NOT EXISTS idx_candidates_norm_name ON domain_candidates(normalized_name);

@@ -29,6 +29,7 @@ Provide a minimal Streamlit UI to upload PDFs, adjust parameters, trigger the RA
   - After a successful run, reload the domain list from SQLite.
 - Provide a link to the artifact bundle output location (see `docs/artifact_spec.md`).
  - Display the configured artifact output directory from `ARTIFACT_DIR`.
+- Display token usage for the most recent run and cumulative total by model.
 
 ## UI State
 Use `st.session_state` for:

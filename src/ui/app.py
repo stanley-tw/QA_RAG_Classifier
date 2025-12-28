@@ -4,6 +4,7 @@ import hashlib
 import sqlite3
 from dataclasses import replace
 from datetime import datetime, timezone
+from os import getenv
 from pathlib import Path
 
 import streamlit as st
@@ -21,6 +22,7 @@ from src.db.repo import (
 )
 from src.db.review_repo import list_pending_reviews, resolve_review
 from src.db.schema import create_schema
+from src.db.token_usage_repo import get_latest_run_usage, get_total_usage
 from src.pipeline.run import run_pipeline
 from src.ui.state import load_domain_list, load_pdf_lists
 
@@ -203,6 +205,15 @@ def render_parameters(config) -> None:
                     "No PDFs available. Please upload at least one PDF to run the pipeline."
                 )
                 return
+            azure_endpoint = getenv("AZURE_OPENAI_ENDPOINT")
+            azure_api_key = getenv("AZURE_OPENAI_API_KEY")
+            azure_ad_token = getenv("AZURE_OPENAI_AD_TOKEN")
+            if not azure_endpoint or (not azure_api_key and not azure_ad_token):
+                st.error(
+                    "Missing Azure OpenAI credentials. Set AZURE_OPENAI_ENDPOINT and "
+                    "AZURE_OPENAI_API_KEY (or AZURE_OPENAI_AD_TOKEN) before running."
+                )
+                return
             st.session_state["stored_pdfs"] = stored_pdfs
             st.session_state["processed_pdfs"] = processed_pdfs
             progress = st.progress(0)
@@ -247,7 +258,16 @@ def render_parameters(config) -> None:
                         config.preferred_display_language,
                     ),
                 )
-                success = run_pipeline(updated_config, progress_cb=report)
+                try:
+                    success = run_pipeline(updated_config, progress_cb=report)
+                except Exception as exc:
+                    st.error("Pipeline failed. Fix the issue and try again.")
+                    st.text_area(
+                        "Error details",
+                        value=str(exc),
+                        height=140,
+                    )
+                    return
             if success:
                 st.success("Pipeline run completed.")
                 st.session_state["domain_list"] = load_domain_list(config.db_path)
@@ -319,6 +339,35 @@ def render_review_queue(db_path: str) -> None:
         conn.close()
 
 
+def render_token_usage(db_path: str) -> None:
+    st.subheader("Token Usage")
+    conn = sqlite3.connect(db_path)
+    try:
+        create_schema(conn)
+        latest = get_latest_run_usage(conn)
+        totals = get_total_usage(conn)
+        if not latest and not totals:
+            st.caption("No token usage recorded yet.")
+            return
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("Latest run")
+            if latest and latest.tokens_by_model:
+                for model_name, total in latest.tokens_by_model.items():
+                    st.write(f"{model_name}: {total}")
+            else:
+                st.caption("No run usage available.")
+        with col2:
+            st.markdown("Cumulative total")
+            if totals:
+                for model_name, total in totals.items():
+                    st.write(f"{model_name}: {total}")
+            else:
+                st.caption("No totals available.")
+    finally:
+        conn.close()
+
+
 def main() -> None:
     st.set_page_config(page_title="Domain Discovery", layout="wide")
     st.title("Canonical Domain Discovery")
@@ -334,6 +383,7 @@ def main() -> None:
     render_delete_pdf(config)
     render_domain_list()
     render_review_queue(config.db_path)
+    render_token_usage(config.db_path)
     render_artifact_path(config.artifact_dir)
     st.subheader("PDF Storage")
     st.text(f"Stored PDF directory: {config.pdf_storage_dir}")

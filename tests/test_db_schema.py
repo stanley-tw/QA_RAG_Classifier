@@ -29,6 +29,7 @@ def test_create_schema_creates_required_tables() -> None:
         "block_domain_map",
         "token_count_cache",
         "trunc_text_cache",
+        "token_usage",
     }
 
     assert expected.issubset(tables)

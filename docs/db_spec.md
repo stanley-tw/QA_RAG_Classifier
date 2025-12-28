@@ -171,6 +171,17 @@ trunc_text_cache(
 )
 ```
 
+### token_usage
+```
+token_usage(
+  run_id TEXT NOT NULL,
+  model_name TEXT NOT NULL,
+  total_tokens INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(run_id, model_name)
+)
+```
+
 ## Indexes
 ```
 CREATE INDEX idx_content_blocks_pdf_id ON content_blocks(pdf_id);

@@ -1,8 +1,11 @@
 ﻿from __future__ import annotations
 
-from rich.console import Console
+import sqlite3
 
+from rich.console import Console
 from src.config import load_config
+from src.db.schema import create_schema
+from src.db.token_usage_repo import get_latest_run_usage, get_total_usage
 from src.pipeline.run import run_pipeline
 
 
@@ -33,6 +36,7 @@ def run_cli(args: list[str]) -> int:
         success = run_pipeline(config)
         if success:
             console.print("[green]Pipeline run completed.[/green]")
+            _print_token_usage(console, config.db_path)
             return 0
         console.print("[yellow]Pipeline run skipped (no PDFs or candidates).[/yellow]")
         return 1
@@ -40,3 +44,28 @@ def run_cli(args: list[str]) -> int:
     console.print(f"[red]Unknown command:[/red] {args[0]}")
     console.print("Use: python src/main.py help")
     return 1
+
+
+def _print_token_usage(console: Console, db_path: str) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        create_schema(conn)
+        latest = get_latest_run_usage(conn)
+        totals = get_total_usage(conn)
+        if not latest and not totals:
+            console.print("[yellow]No token usage recorded yet.[/yellow]")
+            return
+        console.print("[bold]Token usage (latest run):[/bold]")
+        if latest and latest.tokens_by_model:
+            for model_name, total in latest.tokens_by_model.items():
+                console.print(f"  {model_name}: {total}")
+        else:
+            console.print("  (no run usage available)")
+        console.print("[bold]Token usage (cumulative):[/bold]")
+        if totals:
+            for model_name, total in totals.items():
+                console.print(f"  {model_name}: {total}")
+        else:
+            console.print("  (no totals available)")
+    finally:
+        conn.close()

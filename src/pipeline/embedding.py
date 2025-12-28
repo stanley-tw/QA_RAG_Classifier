@@ -22,6 +22,7 @@ class EmbeddingResult:
     token_counts: List[int]
     tokenization_mode: str
     truncated_texts: List[str]
+    total_tokens: int
 
 
 class AzureOpenAIEmbedder:
@@ -52,6 +53,7 @@ class AzureOpenAIEmbedder:
             self.approx_enabled,
         )
         vectors: List[List[float]] = []
+        total_tokens = 0
         for i in range(0, len(truncated_texts), batch_size):
             batch = truncated_texts[i : i + batch_size]
             response = self.client.embeddings.create(
@@ -59,11 +61,17 @@ class AzureOpenAIEmbedder:
                 input=batch,
             )
             vectors.extend([item.embedding for item in response.data])
+            usage = getattr(response, "usage", None)
+            if usage and getattr(usage, "total_tokens", None) is not None:
+                total_tokens += int(usage.total_tokens)
+            else:
+                total_tokens += sum(token_counts[i : i + batch_size])
         return EmbeddingResult(
             vectors=vectors,
             token_counts=token_counts,
             tokenization_mode=mode,
             truncated_texts=truncated_texts,
+            total_tokens=total_tokens,
         )
 
 

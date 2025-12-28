@@ -2,6 +2,7 @@
 
 import logging
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Dict, List
@@ -20,6 +21,7 @@ from src.db.embedding_repo import (
     insert_candidate_embedding,
     insert_domain_embedding,
 )
+from src.db.token_usage_repo import insert_token_usage
 from src.db.review_repo import list_rejected_pairs
 from src.db.repo import clear_derived_tables
 from src.db.schema import create_schema
@@ -44,6 +46,9 @@ def run_pipeline(
     if not logger.handlers:
         logging.basicConfig(level=logging.INFO)
     conn = sqlite3.connect(config.db_path)
+    run_id = f"run_{uuid.uuid4().hex}"
+    run_created_at = datetime.now(timezone.utc).isoformat()
+    tokens_by_model: Dict[str, int] = {}
     try:
         create_schema(conn)
         pdfs = _list_pdfs(conn)
@@ -93,6 +98,9 @@ def run_pipeline(
         ]
         name_only_embeddings = embedder.embed_texts(conn, name_only_texts)
         name_plus_embeddings = embedder.embed_texts(conn, name_plus_texts)
+        tokens_by_model[embedding_model] = tokens_by_model.get(
+            embedding_model, 0
+        ) + name_only_embeddings.total_tokens + name_plus_embeddings.total_tokens
 
         candidate_ids = [c.candidate_id for c in candidates]
         embeddings_by_id_name = dict(
@@ -168,12 +176,15 @@ def run_pipeline(
 
         domains = _build_domains_payload(conn)
         _report(progress_cb, "Embedding domains", 0.8)
-        domain_embeddings = _build_domain_embeddings(
+        domain_embeddings, domain_tokens = _build_domain_embeddings(
             conn,
             domains=domains,
             candidates={c.candidate_id: c for c in candidates},
             embedder=embedder,
         )
+        tokens_by_model[embedding_model] = tokens_by_model.get(
+            embedding_model, 0
+        ) + domain_tokens
         label_index = build_label_index(
             embedding_model=embedding_model,
             embedding_dimension=embedding_dim,
@@ -210,6 +221,18 @@ def run_pipeline(
         _report(progress_cb, "Artifact bundle written", 1.0)
         return True
     finally:
+        try:
+            if tokens_by_model:
+                for model_name, total_tokens in tokens_by_model.items():
+                    insert_token_usage(
+                        conn,
+                        run_id=run_id,
+                        model_name=model_name,
+                        total_tokens=total_tokens,
+                        created_at=run_created_at,
+                    )
+        except Exception:
+            logger.exception("Failed to persist token usage metrics.")
         conn.close()
 
 
@@ -355,7 +378,7 @@ def _build_domain_embeddings(
     domains: List[Dict[str, object]],
     candidates: Dict[str, DomainCandidate],
     embedder: AzureOpenAIEmbedder,
-) -> Dict[str, List[float]]:
+) -> tuple[Dict[str, List[float]], int]:
     conn.row_factory = sqlite3.Row
     block_map = conn.execute(
         "SELECT block_id, domain_id FROM block_domain_map ORDER BY block_id;"
@@ -399,7 +422,7 @@ def _build_domain_embeddings(
             token_count=token_count,
             tokenization_mode=embedded.tokenization_mode,
         )
-    return embeddings
+    return embeddings, embedded.total_tokens
 
 
 def _build_label_vec(
